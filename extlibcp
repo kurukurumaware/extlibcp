@@ -1,0 +1,358 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2020 kurukurumaware
+# License: Apache License, Version 2.0
+#          MIT License
+
+LF="
+"
+
+var_execPathList=$LF
+var_libPathList=$LF
+var_linkPathList=$LF
+var_ignoreList=""
+var_sourcePath=""
+var_destPath=""
+var_linkSource=""
+var_ignoreFile=""
+var_displaymodeFlag=false
+var_binlistFlag=false
+var_ignoreFlag=false
+
+# copy file to directory
+function listCopy() {
+    var_sourceList=$1
+    var_destdir=$2
+
+    while read var_source; do
+        if [ -n "$var_source" ]; then
+            printf "copy - ${var_source}  >  ${var_destdir}${var_source} \n"
+            cp --archive --parents --no-dereference ${var_source} ${var_destdir}
+        fi
+    done << END
+        $var_sourceList
+END
+}
+
+
+# show library list
+function showLibraryList() {
+
+    var_sourceList=$1
+    while read var_source; do
+        if [ -n "$var_source" ]; then
+            printf "${var_source}\n"
+        fi
+    done << END
+        $var_sourceList
+END
+
+}
+
+
+# add item to var_execPathList
+function addExecList (){
+
+    local var_path=$1
+    if [[ "$var_execPathList" = *$LF${var_path}$LF* ]]; then
+        return 1
+    fi
+    if [[ "${var_ignoreList}" = *$LF${var_path}$LF* ]]; then
+        printf "\033[33mdon't add  : %s\033[m\n" $var_path
+        return 0
+    fi
+    var_execPathList+="${var_path}"$LF
+    printf "\033[36madd execute: %s\033[m\n" $var_path
+    return 0
+
+}
+
+# add item to var_libPathList
+function addLibraryList (){
+
+    local var_path=$1
+    if [[ "$var_libPathList" = *$LF${var_path}$LF* ]]; then
+        return 1
+    fi
+    if [[ "${var_ignoreList}" = *$LF${var_path}$LF* ]]; then
+        printf "\033[33mdon't add  : %s\033[m\n" $var_path
+        return 0
+    fi
+    var_libPathList+="${var_path}"$LF
+    printf "\033[36madd library: %s\033[m\n" $var_path
+    return 0
+
+}
+
+
+# add item to var_linkPathList
+function addLinkList (){
+
+    local var_path=$1
+    local var_source=$2
+    if [[ "$var_linkPathList" = *$LF${var_path}$LF* ]]; then
+        return 1
+    fi
+    if [[ "${var_ignoreList}" = *$LF${var_path}$LF* ]]; then
+        printf "\033[33mdon't add  : %s\033[m\n" $var_path
+        return 0
+    fi
+    var_linkPathList+="${var_path}"$LF
+    printf "\033[36madd symlink: %s\033[m -> %s\n" $var_path $var_source
+    return 0
+
+}
+
+
+# add path to list
+function search_Link(){
+
+    local var_inspectPath=$1
+    local var_executeFlag=$2
+    local var_pathDir
+    if [[ $var_inspectPath == /* ]]; then
+        var_pathDir=${var_inspectPath%/*}
+    elif [[ $var_inspectPath == */* ]]; then
+        var_pathDir=${PWD}/${var_inspectPath%/*}
+        var_inspectPath=${PWD}/$1
+    else
+        var_inspectPath=${PWD}/$var_inspectPath
+        var_pathDir=${PWD}
+    fi
+    if ! [[ -e ${var_inspectPath} ]]; then
+        printf "\033[31mError - ${var_inspectPath}\
+        \nFile not found\n\033[m\n"
+    fi
+    local var_linkSource=`readlink ${var_inspectPath}`
+    if [[ -z ${var_linkSource} ]]; then
+        local var_data=$( od -Ax -tx1 -N17 -w17 $var_inspectPath | (read var_i;echo ${var_i#000000}) )
+        if [[ $var_data == 7f*45*4c*46*03 ]]; then
+            if $var_executeFlag ; then
+                addExecList $var_inspectPath
+            else
+                addLibraryList $var_inspectPath
+            fi
+        fi
+        return 1
+    fi
+    if ! [[ $var_linkSource == /* ]]; then
+        var_linkSource=$var_pathDir/$var_linkSource
+    fi
+    addLinkList $var_inspectPath $var_linkSource || {
+        return 0 
+    }
+    search_Link $var_linkSource false
+    return 0
+
+}
+
+
+# find dependent files
+function findDependence(){
+
+    local dependencyList=()
+    local var_findList=`ldd  $1`
+    
+    while read var_line; do
+        local var_lineString=${var_line#*=> }
+        var_lineString=${var_lineString% *}
+
+        if [[ "$var_lineString" = /* ]]; then
+            dependencyList+=( $var_lineString )
+            printf "depend on  : %s\n" $var_lineString
+        fi
+    done << END
+        $var_findList
+END
+
+    for var_filePath in "${dependencyList[@]}" ;do
+        if ! [[ "$var_libPathList" = *${var_filePath}* ]]; then
+            search_Link $var_filePath false
+        fi
+    done
+
+}
+
+
+# process the `binary files list`
+function executFileListProcess(){
+
+    local executFileList=`cat $1`
+    while read var_commandPath; do
+        if [ -n "$var_commandPath" ]; then
+            if [ -e "$var_commandPath" ]; then
+                :
+            else
+                printf "\033[31mError - ${var_commandPath}\
+                \nThis path does not exist\033[m\n"
+                exit 1
+            fi
+        fi
+    done << END
+    $executFileList
+END
+
+    while read var_commandPath; do
+        if [ -n "$var_commandPath" ]; then
+            printf "==========   %s   ==========\n" $var_commandPath
+            search_Link $var_commandPath true
+            findDependence $var_commandPath
+        fi
+    done << END
+    $executFileList
+END
+
+}
+
+
+# processing to find a library of binary files
+function executFindLibrary(){
+
+    local var_commandPath=$1
+    printf "==========   %s   ==========\n" $var_commandPath
+    search_Link $var_commandPath true
+    findDependence $var_commandPath
+
+}
+
+
+# create ignore list
+function createIgnoreList(){
+
+    if ! [ -e ${1} ]; then
+        printf "\033[31mError - '${1}' not found.\
+        \nThis file is required for the '-i'option\033[m\n"
+        exit 1
+    fi
+
+    local var_pathList+=$LF`cat $1`$LF
+    while read var_ipath; do
+        if [ -n "$var_ipath" ]; then
+            if [ -e "$var_ipath" ]; then
+                :
+            else
+                printf "\033[31mError - ${var_ipath}\
+                \nThis path in the'ignore file' does not exist\033[m\n"
+                exit 1
+            fi
+        fi
+    done << END
+    ${var_pathList}
+END
+    var_ignoreList=${var_pathList// /}
+}
+
+
+# process the `command argument`
+function argumentProcess(){
+
+    for var_arg in "$@";do
+        local check_ig=false
+        if  [[ ${var_arg} = *\=* ]]; then
+            var_ignoreFile=${var_arg#*=}
+            var_arg=${var_arg%=*}
+            check_ig=true
+        fi
+        if  [[ ${var_arg} = -* ]]; then
+            if  [[ ${var_arg} = -*d* ]]; then
+                var_displaymodeFlag=true;
+            fi
+            if  [[ ${var_arg} = -*f* ]]; then
+                var_binlistFlag=true;
+            fi
+            if  [[ ${var_arg} = -*i* ]]; then
+                var_ignoreFlag=true;
+            fi
+        elif $check_ig; then
+            :
+        elif [[ -z ${var_sourcePath} ]]; then
+            if [ -e ${var_arg} ]; then
+                var_sourcePath=${var_arg}
+            else
+                printf "\033[31mError - ${var_arg}\
+                \nThis source path does not exist\033[m\n"
+                return 1
+            fi
+        elif [[ -z ${var_destPath} ]]; then
+                var_destPath=${var_arg%/}
+        fi
+    done
+
+    if $var_ignoreFlag; then
+        if [ -z ${var_ignoreFile} ]; then 
+            var_ignoreFile=".exlibignore"
+        else
+            if ! [ -e ${var_ignoreFile} ]; then 
+                printf "\033[31mError -- invalid 'ignorefile' option \n\033[m\n"
+                return 1
+            fi
+        fi
+    fi
+    if $var_binlistFlag ; then
+        if [ -z ${var_sourcePath} ]; then
+        printf "\033[31mError --  source are missing\
+        \nexlibcp [option] [binay file list] [destination directory]\033[m\n"
+        return 1
+        fi
+
+        local var_check=true
+        local var_data=$( od -Ax -tx1 -N64 -w64 $var_sourcePath | (read var_i;echo ${var_i#000000}) )
+        local var_comp="\s0[0-8]\s"
+        if [[ $data =~ $var_comp ]]; then
+                printf "\033[31mError --  '-f' option requires a text file from the source\
+                \nexlibcp -f [binay file list] [destination directory]\033[m\n"
+                return 1
+        fi
+        if ! $var_displaymodeFlag ; then
+            if [ -z ${var_destPath} ]; then
+                printf "\033[31mError --  destination are missing\
+                \nexlibcp -f [binay file list] [destination directory]\033[m\n"
+            return 1
+            fi
+        fi
+    else
+        if [ -z ${var_sourcePath} ]; then
+        printf "\033[31mError --  source are missing\
+        \nexlibcp [option] [binay file] [destination directory]\033[m\n"
+        return 1
+        fi
+        if ! $var_displaymodeFlag ; then
+            if [ -z ${var_destPath} ]; then
+                printf "\033[31mError --  destination are missing\
+                \nexlibcp [binay file] [destination directory]\033[m\n"
+            return 1
+            fi
+        fi
+    fi
+
+}
+
+
+
+argumentProcess "$@" || {
+    exit 1
+}
+
+if $var_ignoreFlag; then
+    createIgnoreList ${var_ignoreFile}
+fi
+
+if $var_binlistFlag ; then
+    executFileListProcess ${var_sourcePath}
+else
+    executFindLibrary ${var_sourcePath}
+fi
+
+if $var_displaymodeFlag ; then
+    printf "\n=-=-=-=-=-=  Executable, Library, Symlink  =-=-=-=-=-=\n"
+    showLibraryList "$var_execPathList"
+    showLibraryList "$var_libPathList"
+    showLibraryList "$var_linkPathList"
+else
+    mkdir -p ${var_destPath}
+    printf "\n=-=-=-=  Copied file to directory  =-=-=-=\n"
+    listCopy "$var_execPathList" ${var_destPath}
+    listCopy "$var_libPathList" ${var_destPath}
+    listCopy "$var_linkPathList" ${var_destPath}
+fi
