@@ -12,13 +12,14 @@ var_execPathList=$LF
 var_libPathList=$LF
 var_linkPathList=$LF
 var_ignoreList=""
-var_sourcePath=""
+var_sourcePathList=""
 var_destPath=""
 var_linkSource=""
 var_ignoreFile=""
 var_displaymodeFlag=false
 var_binlistFlag=false
 var_ignoreFlag=false
+
 
 # copy file to directory
 function listCopy() {
@@ -67,6 +68,7 @@ function addExecList (){
     return 0
 
 }
+
 
 # add item to var_libPathList
 function addLibraryList (){
@@ -175,44 +177,28 @@ END
 }
 
 
-# process the `binary files list`
-function executFileListProcess(){
+# parse the `binary files list`
+function fileListParse(){
 
-    local executFileList=`cat $1`
-    while read var_commandPath; do
+    local executFileList="$1"
+    for var_commandPath in $executFileList ; do
         if [ -n "$var_commandPath" ]; then
             if [ -e "$var_commandPath" ]; then
                 :
             else
                 printf "\033[31mError - ${var_commandPath}\
-                \nThis path does not exist\033[m\n"
+                \nThis source path does not exist\033[m\n"
                 exit 1
             fi
         fi
-    done << END
-    $executFileList
-END
-
-    while read var_commandPath; do
+    done
+    for var_commandPath in $executFileList ; do
         if [ -n "$var_commandPath" ]; then
             printf "==========   %s   ==========\n" $var_commandPath
             search_Link $var_commandPath true
             findDependence $var_commandPath
         fi
-    done << END
-    $executFileList
-END
-
-}
-
-
-# processing to find a library of binary files
-function executFindLibrary(){
-
-    local var_commandPath=$1
-    printf "==========   %s   ==========\n" $var_commandPath
-    search_Link $var_commandPath true
-    findDependence $var_commandPath
+    done
 
 }
 
@@ -246,7 +232,9 @@ END
 
 # process the `command argument`
 function argumentProcess(){
-
+    if [ -p /dev/stdin ]; then
+        var_sourcePathList=$(cat /dev/stdin)
+    fi
     for var_arg in "$@";do
         local check_ig=false
         if  [[ ${var_arg} = *\=* ]]; then
@@ -258,22 +246,13 @@ function argumentProcess(){
             if  [[ ${var_arg} = -*d* ]]; then
                 var_displaymodeFlag=true;
             fi
-            if  [[ ${var_arg} = -*f* ]]; then
-                var_binlistFlag=true;
-            fi
             if  [[ ${var_arg} = -*i* ]]; then
                 var_ignoreFlag=true;
             fi
         elif $check_ig; then
             :
-        elif [[ -z ${var_sourcePath} ]]; then
-            if [ -e ${var_arg} ]; then
-                var_sourcePath=${var_arg}
-            else
-                printf "\033[31mError - ${var_arg}\
-                \nThis source path does not exist\033[m\n"
-                return 1
-            fi
+        elif [[ -z ${var_sourcePathList} ]]; then
+            var_sourcePathList=${var_arg}
         elif [[ -z ${var_destPath} ]]; then
                 var_destPath=${var_arg%/}
         fi
@@ -289,46 +268,18 @@ function argumentProcess(){
             fi
         fi
     fi
-    if $var_binlistFlag ; then
-        if [ -z ${var_sourcePath} ]; then
-        printf "\033[31mError --  source are missing\
-        \nexlibcp [option] [binay file list] [destination directory]\033[m\n"
+    if ! $var_displaymodeFlag ; then
+        if [ -z ${var_destPath} ]; then
+            printf "\033[31mError --  destination are missing\
+            \nexlibcp [binay file] [destination directory]\033[m\n"
         return 1
-        fi
-
-        local var_check=true
-        local var_data=$( od -Ax -tx1 -N64 -w64 $var_sourcePath | (read var_i;echo ${var_i#000000}) )
-        local var_comp="\s0[0-8]\s"
-        if [[ $data =~ $var_comp ]]; then
-                printf "\033[31mError --  '-f' option requires a text file from the source\
-                \nexlibcp -f [binay file list] [destination directory]\033[m\n"
-                return 1
-        fi
-        if ! $var_displaymodeFlag ; then
-            if [ -z ${var_destPath} ]; then
-                printf "\033[31mError --  destination are missing\
-                \nexlibcp -f [binay file list] [destination directory]\033[m\n"
-            return 1
-            fi
-        fi
-    else
-        if [ -z ${var_sourcePath} ]; then
-        printf "\033[31mError --  source are missing\
-        \nexlibcp [option] [binay file] [destination directory]\033[m\n"
-        return 1
-        fi
-        if ! $var_displaymodeFlag ; then
-            if [ -z ${var_destPath} ]; then
-                printf "\033[31mError --  destination are missing\
-                \nexlibcp [binay file] [destination directory]\033[m\n"
-            return 1
-            fi
         fi
     fi
 
 }
 
 
+# === main routine start ====
 
 argumentProcess "$@" || {
     exit 1
@@ -338,11 +289,7 @@ if $var_ignoreFlag; then
     createIgnoreList ${var_ignoreFile}
 fi
 
-if $var_binlistFlag ; then
-    executFileListProcess ${var_sourcePath}
-else
-    executFindLibrary ${var_sourcePath}
-fi
+fileListParse "$var_sourcePathList"
 
 if $var_displaymodeFlag ; then
     printf "\n=-=-=-=-=-=  Executable, Library, Symlink  =-=-=-=-=-=\n"
