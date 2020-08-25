@@ -248,7 +248,7 @@ END
 
 # process the `command argument`
 function argumentProcess(){
-    if [ -p /dev/stdin ]; then
+    if ! [ -t 0 ]; then
         var_sourcePathList=$(cat /dev/stdin)
     fi
     for var_arg in "$@";do
