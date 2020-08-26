@@ -249,7 +249,7 @@ END
 # process the `command argument`
 function argumentProcess(){
     if ! [ -t 0 ]; then
-        var_sourcePathList=$(cat /dev/stdin)
+        var_sourcePathList=$(cat)
     fi
     for var_arg in "$@";do
         local check_ig=false
